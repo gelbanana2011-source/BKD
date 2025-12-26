@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>簡易バーコードレジ</title>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        h1 { text-align: center; font-size: 1.5rem; }
+        
+        /* タブのスタイル */
+        .tabs { display: flex; justify-content: space-around; margin-bottom: 20px; }
+        .tab-btn { flex: 1; padding: 10px; border: none; background: #ddd; cursor: pointer; font-weight: bold; }
+        .tab-btn.active { background: #007bff; color: white; }
+
+        /* スキャナーエリア */
+        #reader { width: 100%; background: black; margin-bottom: 20px; border-radius: 8px; overflow: hidden; }
+
+        /* コンテンツエリア */
+        .content { display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .content.active { display: block; }
+
+        /* フォームとリスト */
+        input, button { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; }
+        button { background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background-color: #218838; }
+        button.delete { background-color: #dc3545; margin-top: 5px; }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border-bottom: 1px solid #ddd; padding: 8px; text-align: left; }
+        .total { font-size: 1.5rem; font-weight: bold; text-align: right; margin-top: 20px; }
+
+        .scanned-code { font-weight: bold; color: #007bff; margin-bottom: 10px; display: block; }
+    </style>
+</head>
+<body>
+
+    <h1>📱 バーコードレジ</h1>
+
+    <div id="reader"></div>
+
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('purchase')">① 購入 (レジ)</button>
+        <button class="tab-btn" onclick="switchTab('register')">② 商品登録</button>
+    </div>
+
+    <div id="purchase" class="content active">
+        <h2>買い物かご</h2>
+        <p>バーコードをスキャンすると追加されます。</p>
+        <table>
+            <thead>
+                <tr><th>商品名</th><th>価格</th></tr>
+            </thead>
+            <tbody id="cart-list">
+                </tbody>
+        </table>
+        <div class="total">合計: ¥<span id="total-price">0</span></div>
+        <button onclick="checkout()">会計を完了する</button>
+        <button class="delete" onclick="clearCart()">カートを空にする</button>
+    </div>
+
+    <div id="register" class="content">
+        <h2>新規商品登録</h2>
+        <p>スキャンしたコード: <span id="reg-barcode-display" class="scanned-code">未スキャン</span></p>
+        
+        <form id="reg-form" onsubmit="registerProduct(event)">
+            <input type="hidden" id="reg-barcode" required>
+            <input type="text" id="reg-name" placeholder="商品名 (例: お茶)" required>
+            <input type="number" id="reg-price" placeholder="価格 (例: 150)" required>
+            <button type="submit">商品を保存する</button>
+        </form>
+
+        <h3>登録済み商品一覧</h3>
+        <ul id="product-list"></ul>
+        <button class="delete" onclick="resetAllData()">全データをリセット</button>
+    </div>
+
+    <script>
+        // --- データ管理 ---
+        let products = JSON.parse(localStorage.getItem('myShopProducts')) || {};
+        let cart = [];
+        let currentMode = 'purchase'; // 'purchase' or 'register'
+        let isScanning = true; // 連続スキャン防止用フラグ
+
+        // --- スキャナー設定 ---
+        const html5QrcodeScanner = new Html5QrcodeScanner(
+            "reader", { fps: 10, qrbox: 250 }, /* verbose= */ false);
+
+        function onScanSuccess(decodedText, decodedResult) {
+            // 連続読み取りを防ぐための簡易ロック
+            if (!isScanning) return;
+            
+            // ビープ音の代わりに少し停止（UX向上）
+            console.log(`Scan result: ${decodedText}`);
+
+            if (currentMode === 'purchase') {
+                addToCart(decodedText);
+            } else if (currentMode === 'register') {
+                setRegisterCode(decodedText);
+            }
+
+            // 1秒間スキャンを無効化（連写防止）
+            isScanning = false;
+            setTimeout(() => { isScanning = true; }, 1000);
+        }
+
+        html5QrcodeScanner.render(onScanSuccess);
+
+        // --- 購入モードのロジック ---
+        function addToCart(code) {
+            const product = products[code];
+            if (product) {
+                cart.push(product);
+                renderCart();
+                alert(`「${product.name}」を追加しました`);
+            } else {
+                alert(`未登録の商品です (コード: ${code})\n登録タブから商品を登録してください。`);
+            }
+        }
+
+        function renderCart() {
+            const tbody = document.getElementById('cart-list');
+            tbody.innerHTML = '';
+            let total = 0;
+            cart.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${item.name}</td><td>¥${item.price}</td>`;
+                tbody.appendChild(tr);
+                total += parseInt(item.price);
+            });
+            document.getElementById('total-price').innerText = total.toLocaleString();
+        }
+
+        function checkout() {
+            if (cart.length === 0) return alert('カートが空です');
+            if (confirm(`合計 ¥${document.getElementById('total-price').innerText} です。会計しますか？`)) {
+                // ここでサーバーに送信する処理などを書く
+                alert('購入を記録しました！');
+                clearCart();
+            }
+        }
+
+        function clearCart() {
+            cart = [];
+            renderCart();
+        }
+
+        // --- 登録モードのロジック ---
+        function setRegisterCode(code) {
+            document.getElementById('reg-barcode').value = code;
+            document.getElementById('reg-barcode-display').innerText = code;
+            // 既に登録済みなら情報を埋める
+            if (products[code]) {
+                document.getElementById('reg-name').value = products[code].name;
+                document.getElementById('reg-price').value = products[code].price;
+                alert('既に登録済みのコードです。情報を更新できます。');
+            } else {
+                document.getElementById('reg-name').value = '';
+                document.getElementById('reg-price').value = '';
+                document.getElementById('reg-name').focus();
+            }
+        }
+
+        function registerProduct(e) {
+            e.preventDefault();
+            const code = document.getElementById('reg-barcode').value;
+            const name = document.getElementById('reg-name').value;
+            const price = document.getElementById('reg-price').value;
+
+            if (!code) return alert('先にバーコードをスキャンしてください');
+
+            products[code] = { name, price };
+            localStorage.setItem('myShopProducts', JSON.stringify(products));
+            
+            alert(`「${name}」を登録しました！`);
+            renderProductList();
+            
+            // フォームリセット
+            document.getElementById('reg-form').reset();
+            document.getElementById('reg-barcode-display').innerText = '未スキャン';
+        }
+
+        function renderProductList() {
+            const list = document.getElementById('product-list');
+            list.innerHTML = '';
+            Object.keys(products).forEach(code => {
+                const p = products[code];
+                const li = document.createElement('li');
+                li.innerText = `${p.name} (¥${p.price}) - ${code}`;
+                list.appendChild(li);
+            });
+        }
+
+        function resetAllData() {
+            if(confirm('登録商品を全て削除しますか？')) {
+                localStorage.removeItem('myShopProducts');
+                products = {};
+                renderProductList();
+            }
+        }
+
+        // --- タブ切り替え ---
+        function switchTab(mode) {
+            currentMode = mode;
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.content').forEach(content => content.classList.remove('active'));
+            
+            // 対象のタブとコンテンツをアクティブに
+            event.target.classList.add('active');
+            document.getElementById(mode).classList.add('active');
+        }
+
+        // 初期化
+        renderProductList();
+    </script>
+</body>
+</html>
